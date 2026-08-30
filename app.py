@@ -24,67 +24,98 @@ tabs = st.tabs(["🔍 검색하기", "💾 저장된 뉴스 보기", "📊 통�
 
 # --- Tab 1: 검색 및 저장 ---
 with tabs[0]:
-    keyword = st.text_input("검색하고 싶은 뉴스 키워드를 입력하세요:", placeholder="예: 삼성전자 주가, 생성형 AI 트렌드")
+    keyword = st.text_input(
+        "검색하고 싶은 뉴스 키워드를 입력하세요:",
+        placeholder="예: 삼성전자 주가, 생성형 AI 트렌드"
+    )
     search_button = st.button("AI 뉴스 검색 및 저장")
 
     if search_button and keyword:
         with st.spinner("AI가 뉴스를 검색하고 요약 중입니다..."):
             try:
-                # Gemini API 호출 (Google 검색 도구 활용)
-                prompt = f"키워드 '{keyword}'에 대한 가장 최신 뉴스 딱 2건만 검색해. 제목, 출처, 날짜, 원본 URL, 요약을 포함한 JSON 배열로 응답하고 절대 URL을 지어내지 마."
-                
+                # Gemini API 호출
+                prompt = f"""
+                키워드 '{keyword}'에 대한 가장 최신 뉴스 2건을 검색해.
+                반드시 아래 키를 가진 JSON 배열만 반환해.
+                title, source, news_date, url, summary
+                URL을 지어내지 마.
+                """
+
                 response = genai_client.models.generate_content(
                     model="gemini-3.6-flash",
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        tools=[types.Tool(google_search=types.GoogleSearchRetrieval())],
+                        tools=[types.Tool(
+                            google_search=types.GoogleSearchRetrieval()
+                        )],
                         temperature=0.0
                     )
                 )
 
-                # 1) 텍스트에서 JSON 추출 (마크다운 제거)
-                raw_text = response.text
-                json_match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+                # 1) 텍스트에서 JSON 배열 추출
+                raw_text = response.text or ""
+                json_match = re.search(r"\[.*\]", raw_text, re.DOTALL)
+
                 if not json_match:
-                    st.error("AI 응답 형식이 올바르지 않습니다. 다시 시도해주세요.")
+                    st.error("AI 응답에서 뉴스 JSON을 찾지 못했습니다. 다시 시도해주세요.")
                     st.stop()
-                
+
                 news_list = json.loads(json_match.group())
 
-                # Gemini 응답에서 필수 항목이 없는 뉴스는 제외
-                required_fields = ["title", "source", "news_date", "url", "summary"]
+                if not isinstance(news_list, list):
+                    st.error("AI 응답 형식이 올바르지 않습니다.")
+                    st.stop()
+
+                # 2) Gemini 응답 형식 정리
                 valid_news_list = []
 
                 for item in news_list:
                     if not isinstance(item, dict):
                         continue
 
-                    if all(item.get(field) for field in required_fields):
-                        valid_news_list.append(item)
-                    else:
-                        st.warning(f"형식이 불완전한 뉴스 1건을 제외했습니다: {item}")
+                    title = item.get("title")
+                    summary = item.get("summary")
+
+                    # 제목과 요약이 있는 뉴스만 사용
+                    if title and summary:
+                        valid_news_list.append({
+                            "title": title,
+                            "source": item.get("source", "출처 미상"),
+                            "news_date": item.get(
+                                "news_date",
+                                item.get("date", "날짜 미상")
+                            ),
+                            "url": item.get("url", ""),
+                            "summary": summary
+                        })
 
                 news_list = valid_news_list
 
                 if not news_list:
-                    st.error("AI가 필요한 형식의 뉴스 데이터를 반환하지 않았습니다. 다시 검색해주세요.")
+                    st.error("뉴스를 읽어오지 못했습니다. 다른 검색어로 다시 시도해주세요.")
                     st.stop()
 
-                # 2) [URL 환각 방지 로직] 실제 grounding_metadata에서 실제 링크 매칭
-                # 2) 실제 grounding_metadata에서 실제 링크 매칭
+                # 3) 실제 Google 검색 출처 링크 수집
                 real_links = {}
 
                 candidates = getattr(response, "candidates", None) or []
                 first_candidate = candidates[0] if candidates else None
-                grounding_metadata = getattr(first_candidate, "grounding_metadata", None)
-                grounding_chunks = getattr(grounding_metadata, "grounding_chunks", None) or []
+                grounding_metadata = getattr(
+                    first_candidate,
+                    "grounding_metadata",
+                    None
+                )
+                grounding_chunks = getattr(
+                    grounding_metadata,
+                    "grounding_chunks",
+                    None
+                ) or []
 
                 for chunk in grounding_chunks:
                     web = getattr(chunk, "web", None)
                     title = getattr(web, "title", None)
                     uri = getattr(web, "uri", None)
 
-                    # 실제 웹 검색 결과의 정상 URL만 수집
                     if (
                         title
                         and uri
@@ -93,48 +124,58 @@ with tabs[0]:
                     ):
                         real_links[title] = uri
 
-                # JSON 데이터의 URL을 실제 링크로 교체
+                # Gemini 제목과 실제 검색 결과 제목이 유사하면 URL 교체
                 for item in news_list:
                     for real_title, real_uri in real_links.items():
-                        # 제목이 유사하거나 포함된 경우 실제 URL로 덮어쓰기
-                        if item.get("title") and (
+                        if (
                             item["title"] in real_title
                             or real_title in item["title"]
                         ):
                             item["url"] = real_uri
                             break
 
-                # 3) 결과 출력 및 DB 저장
+                # 4) 결과 출력 및 DB 저장
                 success_count = 0
                 dup_count = 0
 
                 for news in news_list:
-                    # 화면 출력
                     with st.container():
-                        st.markdown(f"### [{news['title']}]({news['url']})")
-                        st.caption(f"📅 {news['news_date']} | 🏢 {news['source']}")
-                        st.write(news['summary'])
+                        if news["url"]:
+                            st.markdown(
+                                f"### [{news['title']}]({news['url']})"
+                            )
+                        else:
+                            st.markdown(f"### {news['title']}")
+
+                        st.caption(
+                            f"📅 {news['news_date']} | 🏢 {news['source']}"
+                        )
+                        st.write(news["summary"])
                         st.divider()
 
-                    # DB 저장
                     try:
                         data = {
                             "keyword": keyword,
-                            "title": news['title'],
-                            "source": news['source'],
-                            "news_date": news['news_date'],
-                            "url": news['url'],
-                            "summary": news['summary']
+                            "title": news["title"],
+                            "source": news["source"],
+                            "news_date": news["news_date"],
+                            "url": news["url"],
+                            "summary": news["summary"]
                         }
+
                         supabase.table("news_history").insert(data).execute()
                         success_count += 1
+
                     except APIError as e:
-                        if "23505" in str(e): # 중복 키 에러 코드
+                        if "23505" in str(e):
                             dup_count += 1
                         else:
                             st.error(f"DB 저장 오류: {e}")
 
-                st.toast(f"✅ 완료! (신규 저장: {success_count}건, 중복 제외: {dup_count}건)")
+                st.toast(
+                    f"✅ 완료! (신규 저장: {success_count}건, "
+                    f"중복 제외: {dup_count}건)"
+                )
 
             except Exception as e:
                 st.error(f"오류가 발생했습니다: {e}")
@@ -142,42 +183,56 @@ with tabs[0]:
 # --- Tab 2: 저장된 뉴스 보기 ---
 with tabs[1]:
     st.subheader("저장된 뉴스 히스토리")
-    
-    # 데이터 불러오기
-    res = supabase.table("news_history").select("*").order("created_at", desc=True).execute()
+
+    res = supabase.table("news_history").select("*").order(
+        "created_at",
+        desc=True
+    ).execute()
+
     if res.data:
         df = pd.DataFrame(res.data)
-        
-        # 필터링 UI
+
         search_q = st.text_input("검색어 또는 제목으로 필터링:", "")
-        filtered_df = df[df['title'].str.contains(search_q) | df['keyword'].str.contains(search_q)]
-        
+        filtered_df = df[
+            df["title"].str.contains(search_q, na=False)
+            | df["keyword"].str.contains(search_q, na=False)
+        ]
+
         st.dataframe(filtered_df, use_container_width=True)
-        
-        # CSV 다운로드
-        csv = filtered_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("CSV 결과 다운로드", data=csv, file_name="news_history.csv", mime="text/csv")
+
+        csv = filtered_df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            "CSV 결과 다운로드",
+            data=csv,
+            file_name="news_history.csv",
+            mime="text/csv"
+        )
     else:
         st.info("아직 저장된 뉴스가 없습니다.")
 
 # --- Tab 3: 통계 분석 ---
 with tabs[2]:
     st.subheader("데이터 통계")
-    res = supabase.table("news_history").select("keyword, created_at").execute()
-    
+
+    res = supabase.table("news_history").select(
+        "keyword, created_at"
+    ).execute()
+
     if res.data:
         df_stat = pd.DataFrame(res.data)
         col1, col2 = st.columns(2)
-        
+
         with col1:
             st.write("📌 키워드별 누적 검색 건수")
-            keyword_counts = df_stat['keyword'].value_counts()
+            keyword_counts = df_stat["keyword"].value_counts()
             st.bar_chart(keyword_counts)
-            
+
         with col2:
             st.write("📅 일자별 저장 건수")
-            df_stat['date'] = pd.to_datetime(df_stat['created_at']).dt.date
-            date_counts = df_stat.groupby('date').size()
+            df_stat["date"] = pd.to_datetime(
+                df_stat["created_at"]
+            ).dt.date
+            date_counts = df_stat.groupby("date").size()
             st.line_chart(date_counts)
     else:
         st.info("통계를 표시할 데이터가 부족합니다.")
