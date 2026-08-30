@@ -52,23 +52,27 @@ with tabs[0]:
                 news_list = json.loads(json_match.group())
 
                 # 2) [URL 환각 방지 로직] 실제 grounding_metadata에서 실제 링크 매칭
-                candidates = response.candidates or []
+                # 2) 실제 grounding_metadata에서 실제 링크 매칭
+                real_links = {}
 
-                if candidates:
-                    grounding_metadata = candidates[0].grounding_metadata
-                    grounding_chunks = (
-                        grounding_metadata.grounding_chunks
-                        if grounding_metadata and grounding_metadata.grounding_chunks
-                        else []
-                    )
-                    
-                    for chunk in grounding_metadata.grounding_chunks:
-                        if chunk.web:
-                            title = chunk.web.title
-                            uri = chunk.web.uri
-                            # 리다이렉트 링크가 아니고 http로 시작하는 경우만 수집
-                            if "grounding-api-redirect" not in uri and uri.startswith("http"):
-                                real_links[title] = uri
+                candidates = getattr(response, "candidates", None) or []
+                first_candidate = candidates[0] if candidates else None
+                grounding_metadata = getattr(first_candidate, "grounding_metadata", None)
+                grounding_chunks = getattr(grounding_metadata, "grounding_chunks", None) or []
+
+                for chunk in grounding_chunks:
+                    web = getattr(chunk, "web", None)
+                    title = getattr(web, "title", None)
+                    uri = getattr(web, "uri", None)
+
+                    # 실제 웹 검색 결과의 정상 URL만 수집
+                    if (
+                        title
+                        and uri
+                        and uri.startswith("http")
+                        and "grounding-api-redirect" not in uri
+                    ):
+                        real_links[title] = uri
 
                 # JSON 데이터의 URL을 실제 링크로 교체
                 for item in news_list:
