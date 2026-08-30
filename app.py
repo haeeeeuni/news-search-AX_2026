@@ -34,7 +34,7 @@ with tabs[0]:
                 prompt = f"키워드 '{keyword}'에 대한 가장 최신 뉴스 딱 2건만 검색해. 제목, 출처, 날짜, 원본 URL, 요약을 포함한 JSON 배열로 응답하고 절대 URL을 지어내지 마."
                 
                 response = genai_client.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-3.6-flash",
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         tools=[types.Tool(google_search=types.GoogleSearchRetrieval())],
