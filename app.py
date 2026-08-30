@@ -97,8 +97,11 @@ with tabs[0]:
                 for item in news_list:
                     for real_title, real_uri in real_links.items():
                         # 제목이 유사하거나 포함된 경우 실제 URL로 덮어쓰기
-                        if item['title'] in real_title or real_title in item['title']:
-                            item['url'] = real_uri
+                        if item.get("title") and (
+                            item["title"] in real_title
+                            or real_title in item["title"]
+                        ):
+                            item["url"] = real_uri
                             break
 
                 # 3) 결과 출력 및 DB 저장
