@@ -51,6 +51,25 @@ with tabs[0]:
                 
                 news_list = json.loads(json_match.group())
 
+                # Gemini 응답에서 필수 항목이 없는 뉴스는 제외
+                required_fields = ["title", "source", "news_date", "url", "summary"]
+                valid_news_list = []
+
+                for item in news_list:
+                    if not isinstance(item, dict):
+                        continue
+
+                    if all(item.get(field) for field in required_fields):
+                        valid_news_list.append(item)
+                    else:
+                        st.warning(f"형식이 불완전한 뉴스 1건을 제외했습니다: {item}")
+
+                news_list = valid_news_list
+
+                if not news_list:
+                    st.error("AI가 필요한 형식의 뉴스 데이터를 반환하지 않았습니다. 다시 검색해주세요.")
+                    st.stop()
+
                 # 2) [URL 환각 방지 로직] 실제 grounding_metadata에서 실제 링크 매칭
                 # 2) 실제 grounding_metadata에서 실제 링크 매칭
                 real_links = {}
