@@ -52,7 +52,7 @@ with tabs[0]:
                 news_list = json.loads(json_match.group())
 
                 # 2) [URL 환각 방지 로직] 실제 grounding_metadata에서 실제 링크 매칭
-                candidates = response.candidtes or []
+                candidates = response.candidates or []
 
                 if candidates:
                     grounding_metadata = candidates[0].grounding_metadata
